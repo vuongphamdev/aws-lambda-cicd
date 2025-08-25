@@ -30,7 +30,7 @@ resource "aws_iam_role_policy_attachment" "basic_execution" {
 
 data "archive_file" "lambda_zip" {
   type        = "zip"
-  source_file = "index.js"
+  source_file = "../../index.js"
   output_path = "${local.name_prefix}.zip"
 }
 
