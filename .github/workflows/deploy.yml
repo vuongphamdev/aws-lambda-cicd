@@ -60,8 +60,9 @@ jobs:
           terraform init
           terraform apply -auto-approve
 
-  deploy-prod:
-    if: github.event.inputs.environment == 'prod' && github.ref == 'refs/heads/staging'
+  promote-to-prod:
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/staging'
     runs-on: ubuntu-latest
     environment: production
     steps:
