@@ -2,16 +2,7 @@ name: Deploy Lambda
 
 on:
   push:
-    branches: [dev, staging]
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Environment to deploy'
-        required: true
-        default: 'prod'
-        type: choice
-        options:
-        - prod
+    branches: [dev, master]
 
 jobs:
   deploy-dev:
@@ -38,7 +29,7 @@ jobs:
           terraform apply -auto-approve
 
   deploy-staging:
-    if: github.ref == 'refs/heads/staging'
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     environment: staging
     steps:
@@ -62,7 +53,7 @@ jobs:
 
   promote-to-prod:
     needs: deploy-staging
-    if: github.ref == 'refs/heads/staging'
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     environment: production
     steps:
