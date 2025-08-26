@@ -3,74 +3,133 @@ name: Deploy Lambda
 on:
   push:
     branches: [dev, master]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - production
+
+env:
+  NODE_VERSION: '18'
+  TF_VERSION: '1.5.0'
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-name: ${{ steps.build.outputs.artifact-name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build all software modules
+        id: build
+        run: |
+          echo "artifact-name=lambda-build-${{ github.sha }}" >> $GITHUB_OUTPUT
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.artifact-name }}
+          path: |
+            software/
+            infrastructure/
+          retention-days: 30
+
   deploy-dev:
-    if: github.ref == 'refs/heads/dev'
+    needs: build
+    if: ${{ github.ref == 'refs/heads/dev' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev') }}
     runs-on: ubuntu-latest
     environment: dev
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
         with:
-          node-version: '18'
-      - name: Build
-        run: |
-          npm install
-          npm run build
+          name: ${{ needs.build.outputs.artifact-name }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
       - uses: hashicorp/setup-terraform@v3
-      - name: Deploy to Dev
-        working-directory: environments/dev
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Deploy to dev
+        working-directory: infrastructure
         run: |
-          terraform init
-          terraform apply -auto-approve
+          terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" -backend-config="key=lambda-cicd/dev/terraform.tfstate"
+          terraform plan -var="environment=dev" -out=tfplan
+          terraform apply tfplan
 
   deploy-staging:
-    if: github.ref == 'refs/heads/master'
+    needs: build
+    if: ${{ github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging') }}
     runs-on: ubuntu-latest
     environment: staging
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
         with:
-          node-version: '18'
-      - name: Build
-        run: |
-          npm install
-          npm run build
-      - uses: hashicorp/setup-terraform@v3
-      - name: Deploy to Staging
-        working-directory: environments/staging
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        run: |
-          terraform init
-          terraform apply -auto-approve
+          name: ${{ needs.build.outputs.artifact-name }}
 
-  promote-to-prod:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Deploy to staging
+        working-directory: infrastructure
+        run: |
+          terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" -backend-config="key=lambda-cicd/staging/terraform.tfstate"
+          terraform plan -var="environment=staging" -out=tfplan
+          terraform apply tfplan
+
+  promote-to-production:
     needs: deploy-staging
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
         with:
-          node-version: '18'
-      - name: Build
-        run: |
-          npm install
-          npm run build
+          name: ${{ needs.build.outputs.artifact-name }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
       - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
       - name: Deploy to Production
-        working-directory: environments/prod
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        working-directory: infrastructure
         run: |
-          terraform init
-          terraform apply -auto-approve
+          terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" -backend-config="key=lambda-cicd/prod/terraform.tfstate"
+          terraform plan -var="environment=prod" -out=tfplan
+          terraform apply tfplan
