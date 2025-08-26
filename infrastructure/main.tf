@@ -18,19 +18,11 @@ provider "aws" {
 
 data "aws_region" "current" {}
 
-data "archive_file" "lambda_zip" {
-  type        = "zip"
-  source_file = "../software/hello-lambda/index.js"
-  output_path = "lambda-${var.environment}.zip"
-}
-
-resource "aws_lambda_function" "hello_lambda" {
-  filename         = data.archive_file.lambda_zip.output_path
-  function_name    = "hello-lambda-${var.environment}"
-  role            = aws_iam_role.lambda_role.arn
-  handler         = "index.handler"
-  runtime         = "nodejs18.x"
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
-
-  tags = local.common_tags
+module "hello_lambda" {
+  source = "./modules/lambda"
+  
+  function_name = "hello-lambda-${var.environment}"
+  environment   = var.environment
+  source_file   = "../software/hello-lambda/index.js"
+  tags          = local.common_tags
 }
