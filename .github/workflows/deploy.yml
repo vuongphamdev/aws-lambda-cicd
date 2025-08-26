@@ -50,18 +50,11 @@ jobs:
             environments/
           retention-days: 30
 
-  deploy:
+  deploy-dev:
     needs: build
+    if: ${{ github.ref == 'refs/heads/dev' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev') }}
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - environment: dev
-            condition: ${{ github.ref == 'refs/heads/dev' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev') }}
-          - environment: staging
-            condition: ${{ github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging') }}
-    if: ${{ matrix.condition }}
-    environment: ${{ matrix.environment }}
+    environment: dev
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -79,15 +72,44 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
-      - name: Deploy to ${{ matrix.environment }}
-        working-directory: environments/${{ matrix.environment }}
+      - name: Deploy to dev
+        working-directory: environments/dev
+        run: |
+          terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          terraform plan -out=tfplan
+          terraform apply tfplan
+
+  deploy-staging:
+    needs: build
+    if: ${{ github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging') }}
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Deploy to staging
+        working-directory: environments/staging
         run: |
           terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
           terraform plan -out=tfplan
           terraform apply tfplan
 
   promote-to-production:
-    needs: deploy
+    needs: deploy-staging
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     environment: production
