@@ -30,24 +30,30 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build TypeScript
+      - name: Build all software modules
         id: build
         run: |
-          npx tsc index.ts
           echo "artifact-name=lambda-build-${{ github.sha }}" >> $GITHUB_OUTPUT
+          
+          # Find and build all modules in software directory
+          for module_dir in software/*/; do
+            if [ -f "$module_dir/package.json" ]; then
+              echo "Building module: $module_dir"
+              cd "$module_dir"
+              npm install
+              npm run build
+              cd - > /dev/null
+            fi
+          done
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.build.outputs.artifact-name }}
           path: |
-            index.js
-            environments/
+            software/
+            infrastructure/
           retention-days: 30
 
   deploy-dev:
@@ -73,10 +79,10 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Deploy to dev
-        working-directory: environments/dev
+        working-directory: infrastructure
         run: |
-          terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
-          terraform plan -out=tfplan
+          terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" -backend-config="key=lambda-cicd/dev/terraform.tfstate"
+          terraform plan -var="environment=dev" -out=tfplan
           terraform apply tfplan
 
   deploy-staging:
@@ -102,10 +108,10 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Deploy to staging
-        working-directory: environments/staging
+        working-directory: infrastructure
         run: |
-          terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
-          terraform plan -out=tfplan
+          terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" -backend-config="key=lambda-cicd/staging/terraform.tfstate"
+          terraform plan -var="environment=staging" -out=tfplan
           terraform apply tfplan
 
   promote-to-production:
@@ -131,8 +137,8 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Deploy to Production
-        working-directory: environments/prod
+        working-directory: infrastructure
         run: |
-          terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
-          terraform plan -out=tfplan
+          terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" -backend-config="key=lambda-cicd/prod/terraform.tfstate"
+          terraform plan -var="environment=prod" -out=tfplan
           terraform apply tfplan

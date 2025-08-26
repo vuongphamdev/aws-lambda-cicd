@@ -8,6 +8,11 @@ variable "environment" {
   type        = string
 }
 
+variable "source_file" {
+  description = "Path to the source file"
+  type        = string
+}
+
 variable "tags" {
   description = "Tags to apply to resources"
   type        = map(string)
